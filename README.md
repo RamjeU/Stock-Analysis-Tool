@@ -10,42 +10,6 @@ This project is a comprehensive stock analysis tool built using Python, Tkinter,
 - **Visualization**: Display plots and summary statistics in separate windows.
 - **Error Handling**: Ensure all input fields are filled correctly before proceeding with the analysis.
 
-## Installation
-
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/yourusername/stock-analysis-tool.git
-    ```
-2. Navigate to the project directory:
-    ```bash
-    cd stock-analysis-tool
-    ```
-3. Install the required dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-## Requirements
-
-- Python 3.x
-- yFinance
-- Matplotlib
-- pandas
-- scikit-learn
-- tabulate
-- tkinter (standard with Python)
-
-## Usage
-
-1. Run the main script:
-    ```bash
-    python main.py
-    ```
-2. Enter the stock ticker, start date, and end date.
-3. Select the type of analysis you want to perform (Summary, Plot, Moving Average, or Predict).
-4. If you choose Moving Average, provide the window size.
-5. Click "Submit" to view the results.
-
 ## Code Overview
 
 ### `AutoCompleteCombobox` Class
