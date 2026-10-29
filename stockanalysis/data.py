@@ -61,6 +61,8 @@ def load_prices(request: PriceRequest) -> pd.DataFrame:
     """Download daily, split- and dividend-adjusted prices from Yahoo Finance."""
     import yfinance as yf  # imported lazily so the analysis code and tests need no network
 
+    check_yfinance_version(yf.__version__)
+
     # Ticker.history with raise_errors=True surfaces Yahoo's real error (rate limit, SSL,
     # delisted symbol...). yf.download swallows those and returns an empty frame instead.
     last_exc: Exception | None = None
@@ -88,6 +90,26 @@ def load_prices(request: PriceRequest) -> pd.DataFrame:
             f"{request.end}. Check the symbol (e.g. META, not FB) and the date range."
         )
     return clean_prices(raw)
+
+
+MIN_YFINANCE = (1, 0)
+
+
+def check_yfinance_version(version: str) -> None:
+    """Old yfinance releases break whenever Yahoo changes its API; fail early with the exact fix."""
+    import sys
+
+    try:
+        parts = tuple(int(p) for p in version.split(".")[:2])
+    except ValueError:
+        return  # unusual version string (dev build); let the request decide
+    if parts < MIN_YFINANCE:
+        raise DataError(
+            f"This app needs yfinance 1.0 or newer, but the Python running it has yfinance {version}, "
+            "which can no longer read Yahoo Finance data. Stop the app, then run:\n\n"
+            f"{sys.executable} -m pip install -U yfinance\n\n"
+            f"and restart it with: {sys.executable} -m streamlit run app.py"
+        )
 
 
 def _is_transient(exc: Exception) -> bool:

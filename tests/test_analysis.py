@@ -132,7 +132,7 @@ def _fake_yf(monkeypatch, ticker):
     import sys
     import types
 
-    mod = types.SimpleNamespace(Ticker=ticker, __version__="test")
+    mod = types.SimpleNamespace(Ticker=ticker, __version__="1.7.0")
     monkeypatch.setitem(sys.modules, "yfinance", mod)
     monkeypatch.setattr("stockanalysis.data.time.sleep", lambda s: None)
 
@@ -176,3 +176,12 @@ def test_loader_cleans_history_frame(monkeypatch):
     _fake_yf(monkeypatch, _FakeTicker(frame=frame, calls=[]))
     out = load_prices(PriceRequest("META", date(2022, 10, 1), date(2022, 12, 31)))
     assert list(out.columns) == ["Open", "High", "Low", "Close", "Volume"] and out.index.tz is None
+
+
+def test_outdated_yfinance_is_rejected_with_upgrade_command():
+    from stockanalysis.data import check_yfinance_version
+
+    with pytest.raises(DataError, match="pip install -U yfinance"):
+        check_yfinance_version("0.2.40")
+    check_yfinance_version("1.7.0")
+    check_yfinance_version("1.0.0.dev1")
