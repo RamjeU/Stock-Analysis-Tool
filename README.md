@@ -43,6 +43,10 @@ An interactive web app for analysing and comparing stocks on Yahoo Finance. It c
 - Simulates up to 5,000 price paths up to a year ahead, by **bootstrapping** real past returns (keeping fat tails) or by **geometric Brownian motion**.
 - A fan chart of the 50% and 90% ranges, the median outcome, and the probability of ending higher.
 
+**Guide pages**
+- **How to use:** a quick start and a plain-English glossary of every metric in the app.
+- **Get rich quick:** a satirical guide to losing money with this app, ending with the boring advice that actually works.
+
 **Data**
 - Split- and dividend-adjusted prices, with a CSV download.
 - Clear errors for unknown or delisted tickers (for example, `FB` is now `META`), rate limits, SSL problems, and outdated yfinance installs.
@@ -80,6 +84,9 @@ Push the repo to GitHub. At [share.streamlit.io](https://share.streamlit.io), cr
 
 ```
 app.py                      Streamlit interface (charts, tabs, controls)
+pages/
+├── 1_How_to_use.py         Quick start and glossary
+└── 2_Get_rich_quick.py     Satire, with one honest lesson
 stockanalysis/
 ├── data.py                 Input validation, Yahoo Finance download, cleaning
 ├── indicators.py           SMA, EMA, RSI, MACD, Bollinger, drawdown, risk metrics, beta
@@ -100,7 +107,7 @@ ruff check .
 pytest -q
 ```
 
-GitHub Actions runs the linter and all 23 tests on Python 3.10 and 3.12 for every push.
+GitHub Actions runs the linter and all 26 tests on Python 3.10 and 3.12 for every push.
 
 ## Tech
 

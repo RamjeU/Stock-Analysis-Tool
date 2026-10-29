@@ -56,3 +56,18 @@ def test_app_shows_error_for_bad_ticker(monkeypatch):
     at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception
     assert at.error and "No data found" in at.error[0].value
+
+
+@pytest.mark.parametrize("page", ["1_How_to_use.py", "2_Get_rich_quick.py"])
+def test_extra_pages_render(page):
+    path = str(Path(APP).parent / "pages" / page)
+    at = st_testing.AppTest.from_file(path, default_timeout=30).run()
+    assert not at.exception, at.exception
+    assert at.title
+
+
+def test_tip_button_gives_a_tip():
+    path = str(Path(APP).parent / "pages" / "2_Get_rich_quick.py")
+    at = st_testing.AppTest.from_file(path, default_timeout=30).run()
+    at.button[0].click().run()
+    assert at.success and at.success[0].value
