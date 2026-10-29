@@ -41,7 +41,8 @@ def test_app_renders(monkeypatch):
     monkeypatch.setattr(data, "load_prices", fake_load_prices)
     at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception, at.exception
-    assert len(at.metric) >= 6  # five headline metrics + the forecast
+    assert len(at.metric) >= 11  # six headline, forecast, four Monte Carlo
+    assert len(at.tabs) == 6
     assert not at.error
 
 

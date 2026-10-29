@@ -185,3 +185,59 @@ def test_outdated_yfinance_is_rejected_with_upgrade_command():
         check_yfinance_version("0.2.40")
     check_yfinance_version("1.7.0")
     check_yfinance_version("1.0.0.dev1")
+
+
+# ---------------------------------------------------------------- ML extras, trend, Monte Carlo
+def test_all_models_scored_and_importance_reported():
+    from stockanalysis.forecast import ML_MODELS
+
+    s = make_prices(n=1000)
+    vol = pd.Series(np.random.default_rng(3).integers(1e6, 5e6, len(s)).astype(float), index=s.index)
+    res = walk_forward_forecast(s, horizon=5, volume=vol)
+    assert {sc.name for sc in res.scores} == {"Random walk", "Historical drift", *ML_MODELS}
+    assert res.best_ml_model in ML_MODELS
+    assert "Volume z-score (20d)" in res.feature_importance.index
+    assert res.feature_importance.index.is_unique
+
+
+def test_model_subset_always_includes_random_walk():
+    res = walk_forward_forecast(make_prices(n=900), horizon=5, models=("Linear regression",))
+    assert [sc.name for sc in res.scores] == ["Random walk", "Linear regression"]
+    with pytest.raises(ValueError, match="Unknown model"):
+        walk_forward_forecast(make_prices(n=900), models=("Crystal ball",))
+
+
+def test_strategy_backtest_uses_next_day_return():
+    from stockanalysis.forecast import strategy_backtest
+
+    s = pd.Series([100.0, 110, 99, 108.9], index=pd.bdate_range("2024-01-01", periods=4))
+    perfect = pd.Series([1.0, -1.0, 1.0, 1.0], index=s.index)  # knows tomorrow: up, down, up
+    equity, stats = strategy_backtest(s, perfect, cost_bps=0)
+    # long day 1 (+10%), flat day 2 (avoids -10%), long day 3 (+10%)
+    assert stats["Strategy total return"] == pytest.approx(1.1 * 1.1 - 1)
+    assert stats["Buy-and-hold total return"] == pytest.approx(108.9 / 100 - 1)
+    _, costly = strategy_backtest(s, perfect, cost_bps=100)
+    assert costly["Strategy total return"] < stats["Strategy total return"]
+
+
+def test_regression_trend_recovers_known_growth():
+    from stockanalysis.analytics import regression_trend
+
+    idx = pd.bdate_range("2015-01-01", periods=1260)
+    s = pd.Series(100 * np.exp(np.log(1.10) / 252 * np.arange(1260)), index=idx)
+    fit = regression_trend(s)
+    assert fit.annual_growth == pytest.approx(0.10, rel=1e-6)
+    assert fit.r_squared == pytest.approx(1.0)
+
+
+def test_monte_carlo_bands_are_ordered():
+    from stockanalysis.analytics import monte_carlo
+
+    s = make_prices()
+    for method in ("bootstrap", "gbm"):
+        sim = monte_carlo(s, days=30, n_paths=500, method=method)
+        assert len(sim) == 30 and sim.index[0] > s.index[-1]
+        assert (sim["P5"] <= sim["P50"]).all() and (sim["P50"] <= sim["P95"]).all()
+        assert 0 <= sim.attrs["prob_up"] <= 1
+    with pytest.raises(ValueError):
+        monte_carlo(s, method="magic")
