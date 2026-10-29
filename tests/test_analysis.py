@@ -1,0 +1,113 @@
+"""Offline tests: synthetic prices only, no network."""
+
+from datetime import date
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from stockanalysis import indicators as ind
+from stockanalysis.data import DataError, PriceRequest, clean_prices
+from stockanalysis.forecast import build_features, build_target, walk_forward_forecast
+
+
+def make_prices(n=900, drift=0.0003, vol=0.015, seed=1) -> pd.Series:
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    return pd.Series(100 * np.exp(np.cumsum(rng.normal(drift, vol, n))), index=idx, name="Close")
+
+
+# ---------------------------------------------------------------- data
+def test_price_request_normalises_and_validates():
+    assert PriceRequest(" msft ", date(2020, 1, 1), date(2021, 1, 1)).ticker == "MSFT"
+    with pytest.raises(DataError):
+        PriceRequest("AAPL", date(2021, 1, 1), date(2020, 1, 1))
+    with pytest.raises(DataError):
+        PriceRequest("AA PL", date(2020, 1, 1), date(2021, 1, 1))
+
+
+def test_clean_prices_flattens_multiindex_and_sorts():
+    idx = pd.to_datetime(["2024-01-03", "2024-01-02"]).tz_localize("America/New_York")
+    cols = pd.MultiIndex.from_product([["Open", "High", "Low", "Close", "Volume"], ["AAPL"]])
+    raw = pd.DataFrame(np.ones((2, 5)) * [1, 2, 0.5, 1.5, 100], index=idx, columns=cols)
+    out = clean_prices(raw)
+    assert list(out.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    assert out.index.is_monotonic_increasing and out.index.tz is None
+
+
+def test_clean_prices_rejects_empty():
+    with pytest.raises(DataError):
+        clean_prices(pd.DataFrame())
+
+
+# ---------------------------------------------------------------- indicators
+def test_sma_matches_manual_mean():
+    s = pd.Series([1.0, 2, 3, 4, 5])
+    assert ind.simple_moving_average(s, 3).tolist()[2:] == [2.0, 3.0, 4.0]
+    with pytest.raises(ValueError):
+        ind.simple_moving_average(s, 0)
+
+
+def test_rsi_bounds_and_extremes():
+    rising = pd.Series(np.arange(1.0, 60.0))
+    assert ind.rsi(rising).dropna().eq(100).all()
+    r = ind.rsi(make_prices()).dropna()
+    assert r.between(0, 100).all()
+
+
+def test_drawdown_and_risk_summary():
+    s = pd.Series([100.0, 120, 90, 130])
+    assert ind.drawdown(s).min() == pytest.approx(90 / 120 - 1)
+    summary = ind.risk_summary(s)
+    assert summary["Total return"] == pytest.approx(0.3)
+    assert summary["Max drawdown"] == pytest.approx(-0.25)
+
+
+def test_beta_of_series_against_itself_is_one():
+    s = make_prices()
+    beta, corr = ind.beta_and_correlation(s, s)
+    assert beta == pytest.approx(1.0) and corr == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------- forecasting
+def test_features_do_not_use_future_prices():
+    """Changing tomorrow's price must not change today's features."""
+    s = make_prices()
+    base = build_features(s)
+    shocked = s.copy()
+    shocked.iloc[500:] *= 1.5
+    after = build_features(shocked)
+    pd.testing.assert_frame_equal(base.iloc[:500], after.iloc[:500])
+
+
+def test_target_is_forward_return():
+    s = pd.Series([100.0, 110, 121])
+    t = build_target(s, 1)
+    assert t.iloc[0] == pytest.approx(np.log(1.1)) and np.isnan(t.iloc[-1])
+
+
+def test_walk_forward_on_random_walk_finds_no_real_edge():
+    res = walk_forward_forecast(make_prices(n=1200, drift=0.0), horizon=5)
+    assert {s.name for s in res.scores} >= {"Random walk", "Ridge regression"}
+    ridge = next(s for s in res.scores if s.name == "Ridge regression")
+    assert ridge.skill_vs_random_walk < 0.05  # pure noise cannot be predicted
+    lo, hi = res.interval_price
+    assert lo < hi and res.forecast_price > 0
+
+
+def test_walk_forward_detects_genuine_signal():
+    """Mean-reverting prices are predictable; the models should beat the random walk."""
+    rng = np.random.default_rng(7)
+    n, x = 1500, [0.0]
+    for _ in range(n - 1):
+        x.append(0.9 * x[-1] + rng.normal(0, 0.02))
+    s = pd.Series(100 * np.exp(np.array(x)), index=pd.bdate_range("2018-01-01", periods=n))
+    res = walk_forward_forecast(s, horizon=5)
+    assert res.beats_baseline
+    best = next(sc for sc in res.scores if sc.name == res.best_model)
+    assert best.skill_vs_random_walk > 0.1
+
+
+def test_walk_forward_requires_enough_history():
+    with pytest.raises(ValueError, match="Not enough history"):
+        walk_forward_forecast(make_prices(n=150), horizon=5)
