@@ -82,7 +82,7 @@ ruff check .
 pytest -q
 ```
 
-GitHub Actions runs the linter and all 14 tests on Python 3.10 and 3.12 for every push.
+GitHub Actions runs the linter and all 17 tests on Python 3.10 and 3.12 for every push.
 
 ## Tech
 

@@ -111,3 +111,68 @@ def test_walk_forward_detects_genuine_signal():
 def test_walk_forward_requires_enough_history():
     with pytest.raises(ValueError, match="Not enough history"):
         walk_forward_forecast(make_prices(n=150), horizon=5)
+
+
+# ---------------------------------------------------------------- loader error handling
+class _FakeTicker:
+    def __init__(self, exc=None, frame=None, calls=None):
+        self.exc, self.frame, self.calls = exc, frame, calls
+
+    def __call__(self, symbol):
+        return self
+
+    def history(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.exc:
+            raise self.exc
+        return self.frame
+
+
+def _fake_yf(monkeypatch, ticker):
+    import sys
+    import types
+
+    mod = types.SimpleNamespace(Ticker=ticker, __version__="test")
+    monkeypatch.setitem(sys.modules, "yfinance", mod)
+    monkeypatch.setattr("stockanalysis.data.time.sleep", lambda s: None)
+
+
+def test_loader_surfaces_real_error_with_hint(monkeypatch):
+    from stockanalysis.data import load_prices
+
+    calls = []
+    _fake_yf(monkeypatch, _FakeTicker(exc=RuntimeError("SSL: CERTIFICATE_VERIFY_FAILED"), calls=calls))
+    with pytest.raises(DataError, match="Install Certificates"):
+        load_prices(PriceRequest("META", date(2022, 10, 1), date(2022, 12, 31)))
+    assert len(calls) == 1  # not a transient error, so no retry
+
+
+def test_loader_retries_rate_limits(monkeypatch):
+    from stockanalysis.data import load_prices
+
+    calls = []
+    _fake_yf(monkeypatch, _FakeTicker(exc=RuntimeError("Too Many Requests. Rate limited."), calls=calls))
+    with pytest.raises(DataError, match="rate-limiting"):
+        load_prices(PriceRequest("META", date(2022, 10, 1), date(2022, 12, 31)))
+    assert len(calls) == 3
+
+
+def test_loader_cleans_history_frame(monkeypatch):
+    from stockanalysis.data import load_prices
+
+    idx = pd.bdate_range("2022-10-03", periods=5, tz="America/New_York")
+    frame = pd.DataFrame(
+        {
+            "Open": 1.0,
+            "High": 2.0,
+            "Low": 0.5,
+            "Close": [1.0, 1.1, 1.2, 1.3, 1.4],
+            "Volume": 10.0,
+            "Dividends": 0.0,
+            "Stock Splits": 0.0,
+        },
+        index=idx,
+    )
+    _fake_yf(monkeypatch, _FakeTicker(frame=frame, calls=[]))
+    out = load_prices(PriceRequest("META", date(2022, 10, 1), date(2022, 12, 31)))
+    assert list(out.columns) == ["Open", "High", "Low", "Close", "Volume"] and out.index.tz is None

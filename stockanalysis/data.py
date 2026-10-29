@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import date
 
@@ -60,20 +61,57 @@ def load_prices(request: PriceRequest) -> pd.DataFrame:
     """Download daily, split- and dividend-adjusted prices from Yahoo Finance."""
     import yfinance as yf  # imported lazily so the analysis code and tests need no network
 
-    try:
-        raw = yf.download(
-            request.ticker,
-            start=request.start,
-            end=request.end,
-            auto_adjust=True,
-            progress=False,
-        )
-    except Exception as exc:  # yfinance raises a wide variety of network errors
-        raise DataError(f"Could not reach Yahoo Finance: {exc}") from exc
+    # Ticker.history with raise_errors=True surfaces Yahoo's real error (rate limit, SSL,
+    # delisted symbol...). yf.download swallows those and returns an empty frame instead.
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            raw = yf.Ticker(request.ticker).history(
+                start=request.start,
+                end=request.end,
+                interval="1d",
+                auto_adjust=True,
+                raise_errors=True,
+            )
+            break
+        except Exception as exc:  # yfinance raises many exception types
+            last_exc = exc
+            if not _is_transient(exc) or attempt == 2:
+                raise DataError(_explain(exc, request)) from exc
+            time.sleep(1.5 * (attempt + 1))
+    else:  # pragma: no cover - loop always breaks or raises
+        raise DataError(_explain(last_exc, request))
 
     if raw is None or raw.empty:
         raise DataError(
-            f"No data found for '{request.ticker}' between {request.start} and {request.end}. "
-            "Check the symbol (e.g. META, not FB) and the date range."
+            f"Yahoo Finance returned no rows for '{request.ticker}' between {request.start} and "
+            f"{request.end}. Check the symbol (e.g. META, not FB) and the date range."
         )
     return clean_prices(raw)
+
+
+def _is_transient(exc: Exception) -> bool:
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(k in text for k in ("ratelimit", "too many requests", "timeout", "timed out", "connection"))
+
+
+def _explain(exc: Exception, request: PriceRequest) -> str:
+    """Turn a yfinance exception into a message a user can act on."""
+    import yfinance as yf
+
+    text = f"{type(exc).__name__}: {exc}"
+    low = text.lower()
+    if "ratelimit" in low or "too many requests" in low:
+        hint = "Yahoo is rate-limiting this connection. Wait a minute and try again."
+    elif "certificate" in low or "ssl" in low:
+        hint = (
+            "Python could not verify Yahoo's SSL certificate. On macOS with the python.org installer, "
+            "run 'Install Certificates.command' from your Python folder in Applications."
+        )
+    elif "delisted" in low or "no timezone" in low or "not found" in low or "no data" in low:
+        hint = f"'{request.ticker}' may be misspelled or delisted, or had no trades in that range."
+    elif "connect" in low or "resolve" in low or "timed out" in low:
+        hint = "Could not connect to Yahoo Finance. Check your internet connection or VPN."
+    else:
+        hint = "Try upgrading yfinance: pip install -U yfinance"
+    return f"{hint}\n\nDetails ({text}; yfinance {yf.__version__})"
